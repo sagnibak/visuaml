@@ -1,0 +1,31 @@
+name: visuaml
+channels:
+  - https://conda.anaconda.org/menpo
+  - conda-forge
+  - plotly
+  - http://conda.anaconda.org/gurobi
+dependencies:
+  - python==3.7.6
+  - pip
+  - numpy
+  - matplotlib
+  - jupyter
+  - opencv
+  - pillow
+  - scikit-learn
+  - scikit-image
+  - scipy
+  - h5py
+  - eventlet
+  - flask-socketio
+  - seaborn
+  - pandas
+  - bokeh
+  - numba
+  - plotly
+  - gurobi
+  - pip:
+    - tensorflow
+    - keras
+    - dash
+    - pylint

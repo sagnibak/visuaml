@@ -39,3 +39,19 @@ class InternalNode(Tree):
     left_subtree: Tree
     right_subtree: Tree
 
+
+def predict(tree: Tree,
+            X: np.ndarray,
+            agg_fn: Callable[[np.ndarray], Union[int, float]])
+    -> Union[int, float]:
+    """Traverses the decision tree `tree` and aggregates the values stored in
+    the appropriate leaf node using the function `agg_fn`. The original design
+    matrix `X` must be passed in since the tree only stores indices.
+    """
+    if isinstance(tree) LeafNode:
+        return agg_fn(X[tree.indices])
+    elif X[tree.split_feature] < tree.split_value:
+        return predict(tree.left_subtree, X, agg_fn)
+    else:  # X[tree.split_feature] >= tree.split_value
+        return predict(tree.right_subtree, X, agg_fn)
+

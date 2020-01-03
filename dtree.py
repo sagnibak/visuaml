@@ -42,16 +42,33 @@ class InternalNode(Tree):
 
 def predict(tree: Tree,
             X: np.ndarray,
-            agg_fn: Callable[[np.ndarray], Union[int, float]])
-    -> Union[int, float]:
+            y: np.ndarray,
+            agg_fn: Callable[[np.ndarray], Union[int, float]]
+            ) -> Union[int, float]:
     """Traverses the decision tree `tree` and aggregates the values stored in
-    the appropriate leaf node using the function `agg_fn`. The original design
-    matrix `X` must be passed in since the tree only stores indices.
+    the appropriate leaf node using the function `agg_fn`. The original labels
+    `y` must be passed in since the tree only stores indices to predict the
+    class or y-value of `X`.
     """
-    if isinstance(tree) LeafNode:
-        return agg_fn(X[tree.indices])
+    if isinstance(tree, LeafNode):
+        return agg_fn(y[tree.indices])
     elif X[tree.split_feature] < tree.split_value:
-        return predict(tree.left_subtree, X, agg_fn)
+        return predict(tree.left_subtree, X, y, agg_fn)
     else:  # X[tree.split_feature] >= tree.split_value
-        return predict(tree.right_subtree, X, agg_fn)
+        return predict(tree.right_subtree, X, y, agg_fn)
+
+def predict_iter(tree: Tree,
+                 X: np.ndarray,
+                 y: np.ndarray,
+                 agg_fn: Callable[[np.ndarray], Union[int, float]]
+                 ) -> Union[int, float]:
+    """Same logic as the recursive predict function but is iterative, so we can
+    predict using arbitrarily deep trees.
+    """
+    while not isinstance(tree, LeafNode):
+        if X[tree.split_feature] < tree.split_value:
+            tree = tree.left_subtree
+        else:
+            tree = tree.right_subtree
+    return agg_fn(y[tree.indices])
 

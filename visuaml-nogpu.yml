@@ -29,3 +29,4 @@ dependencies:
     - keras
     - dash
     - pylint
+    - pydot

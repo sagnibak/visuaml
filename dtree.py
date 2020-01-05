@@ -1,4 +1,5 @@
 import numpy as np
+import pydot
 
 from dataclasses import dataclass
 from typing import *
@@ -87,6 +88,8 @@ def grow(
     y: np.ndarray,
     indices: np.ndarray,
     early_stop: Callable[[np.ndarray, np.ndarray], bool],
+    depth: int = 0,
+    max_depth: Union[int, float] = float("inf"),
 ) -> Tree:
     """
     If there is only one class in y[indices] or we have reached an early
@@ -105,7 +108,9 @@ def grow(
     X  design matrix of shape (n, m), i.e., there are n observations
        and m features
     y  vector of training labels
-    indices  elements of `X` and `y` to be considered
+    indices     elements of `X` and `y` to be considered
+    depth       the depth of the current node
+    max_depth   maximum depth of the tree (infinity by default)
     early_stop  a function that determines if tree growing should stop early
 
     Returns
@@ -114,16 +119,18 @@ def grow(
     """
     # if there is only one class in the current node or we have reached an
     # early stopping condition, then return a leaf
-    if np.allclose(gini_impurity(y[indices]), 0.0) or early_stop(
-        X[indices], y[indices]
+    if (
+        np.allclose(gini_impurity(y[indices]), 0.0)
+        or early_stop(X[indices], y[indices])
+        or depth > max_depth
     ):
         return LeafNode(indices.tolist())
 
     # otherwise find the best split (the one that minimizes the Gini Impurity)
     left_indices = indices
     right_indices = []
-    split_feature = 0
-    split_value = X[0, 0]
+    # split_feature = 0
+    # split_value = X[0, 0]
     min_gini_impurity = 1  # the Gini Impurity is never more than 1
 
     for feature in range(X.shape[1]):
@@ -135,12 +142,15 @@ def grow(
         for val in unique_values[1:]:
             left_indices_ = indices[np.where(X[indices, feature] < val)[0]]
             right_indices_ = indices[np.where(X[indices, feature] >= val)[0]]
-            left_impurity = gini_impurity(y[left_indices])
-            right_impurity = gini_impurity(y[right_indices])
+            left_impurity = gini_impurity(y[left_indices_])
+            right_impurity = gini_impurity(y[right_indices_])
 
-            if len(left_indices_) * left_impurity + len(
-                right_indices_
-            ) * right_impurity <= min_gini_impurity * len(indices):
+            weighted_children_impurity = (
+                len(left_indices_) * left_impurity
+                + len(right_indices_) * right_impurity
+            ) / len(indices)
+            if weighted_children_impurity < min_gini_impurity:
+                min_gini_impurity = weighted_children_impurity
                 left_indices = left_indices_
                 right_indices = right_indices_
                 split_feature = feature
@@ -150,8 +160,8 @@ def grow(
     return InternalNode(
         split_feature,
         split_value,
-        grow(X, y, left_indices, early_stop),
-        grow(X, y, right_indices, early_stop),
+        grow(X, y, left_indices, early_stop, depth + 1, max_depth),
+        grow(X, y, right_indices, early_stop, depth + 1, max_depth),
     )
 
 
@@ -183,3 +193,55 @@ def leaves_too_small(
     are at most `threshold` elements in the node being considered.
     """
     return lambda X, y: len(y) <= threshold
+
+
+def visualize(
+    tree: Tree, vis: pydot.Dot, y: np.ndarray, clock: int = 0
+) -> Tuple[pydot.Node, int]:
+    """Perform a depth-first traversal of `tree` to visualize the decision tree.
+    Original labels `y` must be provided to get the classifications at the leaf
+    nodes. This is a **mutative** function: it mutates |0w0| the pydot.Dot
+    instance `vis`. We don't do anything in the pre-visit. In the post-visit
+    we make a new node for the root node and add the two edges to its children.
+
+    Parameters
+    ----------
+    tree   the decision tree to be visualized
+    vis    pydot.Dot instance to be **mutated**
+    y      training labels
+    clock  tree traversal clock (to generate unique names for nodes)
+
+    Returns
+    -------
+    a tuple containing
+        the root node
+        the incremented clock
+    """
+    # base case: Leaf node
+    if isinstance(tree, LeafNode):
+        vals, counts = list(
+            map(
+                np.ndarray.tolist,
+                np.unique(y[tree.indices], return_counts=True),
+            )
+        )
+        node = pydot.Node(
+            str(clock), label=f"{list(zip(vals, counts))}", shape="box"
+        )
+        vis.add_node(node)
+
+    # otherwise make both children subtrees, then add edges
+    else:
+        left_node, clock = visualize(tree.left_subtree, vis, y, clock)
+        right_node, clock = visualize(tree.right_subtree, vis, y, clock)
+
+        node = pydot.Node(
+            str(clock),
+            label=f"Split feature {tree.split_feature}\n"
+            + f"Split value {tree.split_value}",
+        )
+        vis.add_node(node)
+        vis.add_edge(pydot.Edge(node, left_node, label="<"))
+        vis.add_edge(pydot.Edge(node, right_node, label=">="))
+
+    return node, clock + 1

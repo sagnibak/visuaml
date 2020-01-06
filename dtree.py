@@ -122,7 +122,7 @@ def grow(
     if (
         np.allclose(gini_impurity(y[indices]), 0.0)
         or early_stop(X[indices], y[indices])
-        or depth > max_depth
+        or depth >= max_depth
     ):
         return LeafNode(indices.tolist())
 

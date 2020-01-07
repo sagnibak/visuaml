@@ -90,6 +90,7 @@ def grow(
     early_stop: Callable[[np.ndarray, np.ndarray], bool],
     depth: int = 0,
     max_depth: Union[int, float] = float("inf"),
+    split_between: bool = False,
 ) -> Tree:
     """
     If there is only one class in y[indices] or we have reached an early
@@ -112,6 +113,7 @@ def grow(
     depth       the depth of the current node
     max_depth   maximum depth of the tree (infinity by default)
     early_stop  a function that determines if tree growing should stop early
+    split_between  whether to make splits at unique values or in between them
 
     Returns
     -------
@@ -136,10 +138,16 @@ def grow(
     for feature in range(X.shape[1]):
         # np.unique sorts the unique values!
         unique_values = np.unique(X[indices, feature])
+        if split_between:
+            # split between every pair of unique points
+            split_points = np.correlate(unique_values, np.array([0.5, 0.5]))
+        else:
+            # split at exactly the unique points (but skip the first since that is trivial)
+            split_points = unique_values[1:]
 
         # the first split is trivial since no element is less than the smallest
         # but there is at least one element >= the largest (emphasis on `=`)
-        for val in unique_values[1:]:
+        for val in split_points:
             left_indices_ = indices[np.where(X[indices, feature] < val)[0]]
             right_indices_ = indices[np.where(X[indices, feature] >= val)[0]]
             left_impurity = gini_impurity(y[left_indices_])

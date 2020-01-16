@@ -234,7 +234,8 @@ def visualize(
             )
         )
         node = pydot.Node(
-            str(clock), label=f"{list(zip(vals, counts))}", shape="box"
+            str(clock), label=f"{list(zip(vals, counts))}", shape="box",
+            fillcolor="green", style="filled"
         )
         vis.add_node(node)
 

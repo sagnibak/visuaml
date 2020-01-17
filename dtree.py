@@ -88,6 +88,8 @@ def grow(
     y: np.ndarray,
     indices: np.ndarray,
     early_stop: Callable[[np.ndarray, np.ndarray], bool],
+    weights_pt: Optional[np.ndarray] = None,
+    weights_ft: Optional[np.ndarray] = None,
     depth: int = 0,
     max_depth: Union[int, float] = float("inf"),
     split_between: bool = False,
@@ -108,11 +110,15 @@ def grow(
     ----------
     X  design matrix of shape (n, m), i.e., there are n observations
        and m features
-    y  vector of training labels
+    y  vector of training labels, shape (n, 1)
     indices     elements of `X` and `y` to be considered
+    early_stop  a function that determines if tree growing should stop early
+    weights_pt  the weight of each point in the training set, shape (n, 1)
+    weights_ft  the weight of each feature in the training set, shape (1, m)
+                if a weight vector is None, then each point/feature is equally
+                weighted
     depth       the depth of the current node
     max_depth   maximum depth of the tree (infinity by default)
-    early_stop  a function that determines if tree growing should stop early
     split_between  whether to make splits at unique values or in between them
 
     Returns
@@ -122,11 +128,19 @@ def grow(
     # if there is only one class in the current node or we have reached an
     # early stopping condition, then return a leaf
     if (
-        np.allclose(gini_impurity(y[indices]), 0.0)
-        or early_stop(X[indices], y[indices])
-        or depth >= max_depth
+        np.allclose(gini_impurity(y[indices]), 0.0)  # node is pure
+        or early_stop(X[indices], y[indices])  # hit stopping condition
+        or depth >= max_depth  # reached max depth
+        or _all_points_same(X, indices)  # all points same
     ):
         return LeafNode(indices.tolist())
+
+    # deal with all weightings once so you never have to again
+    # saves a lot of computation this way
+    if weights_ft is not None:
+        X = weights_ft * X
+    if weights_pt is not None:
+        X = weights_pt * X
 
     # otherwise find the best split (the one that minimizes the Gini Impurity)
     left_indices = indices
@@ -142,7 +156,8 @@ def grow(
             # split between every pair of unique points
             split_points = np.correlate(unique_values, np.array([0.5, 0.5]))
         else:
-            # split at exactly the unique points (but skip the first since that is trivial)
+            # split at exactly the unique points (but skip the first since that
+            # results in the trivial split)
             split_points = unique_values[1:]
 
         # the first split is trivial since no element is less than the smallest
@@ -168,9 +183,23 @@ def grow(
     return InternalNode(
         split_feature,
         split_value,
-        grow(X, y, left_indices, early_stop, depth + 1, max_depth),
-        grow(X, y, right_indices, early_stop, depth + 1, max_depth),
+        grow(
+            X, y, left_indices, early_stop, depth=depth + 1, max_depth=max_depth
+        ),
+        grow(
+            X, y, right_indices, early_stop, depth=depth + 1, max_depth=max_depth
+        ),
     )
+
+
+def _all_points_same(X: np.ndarray, indices: np.ndarray) -> bool:
+    """Determine if all the training points X[indices] are the same.
+    The algorithm finds the number of unique elements in each of the features
+    of X[indices]. If there is a single unique value in each of the features
+    or all the unique values are very close then all the points must be the same.
+    """
+    featurewise_unique = np.unique(X[indices], axis=0)
+    return featurewise_unique.shape[0] == 1
 
 
 def gini_impurity(y: np.ndarray) -> float:
@@ -194,9 +223,7 @@ def entropy(y: np.ndarray) -> float:
     return -1 * sum([pi * np.log(pi) for pi in probs])
 
 
-def leaves_too_small(
-    threshold: int,
-) -> Callable[[np.ndarray, np.ndarray], bool]:
+def leaves_too_small(threshold: int,) -> Callable[[np.ndarray, np.ndarray], bool]:
     """Returns an early stopping function which stops tree construction if there
     are at most `threshold` elements in the node being considered.
     """
@@ -229,13 +256,15 @@ def visualize(
     if isinstance(tree, LeafNode):
         vals, counts = list(
             map(
-                np.ndarray.tolist,
-                np.unique(y[tree.indices], return_counts=True),
+                np.ndarray.tolist, np.unique(y[tree.indices], return_counts=True),
             )
         )
         node = pydot.Node(
-            str(clock), label=f"{list(zip(vals, counts))}", shape="box",
-            fillcolor="green", style="filled"
+            str(clock),
+            label=f"{list(zip(vals, counts))}",
+            shape="box",
+            fillcolor="green",
+            style="filled",
         )
         vis.add_node(node)
 

@@ -181,10 +181,26 @@ def grow(
         split_feature,
         split_value,
         grow(
-            X, y, left_indices, early_stop, depth=depth + 1, max_depth=max_depth
+            X,
+            y,
+            left_indices,
+            early_stop,
+            weights_pt=weights_pt,
+            weights_ft=weights_ft,
+            depth=depth + 1,
+            max_depth=max_depth,
+            split_between=split_between,
         ),
         grow(
-            X, y, right_indices, early_stop, depth=depth + 1, max_depth=max_depth
+            X,
+            y,
+            right_indices,
+            early_stop,
+            weights_pt=weights_pt,
+            weights_ft=weights_ft,
+            depth=depth + 1,
+            max_depth=max_depth,
+            split_between=split_between,
         ),
     )
 

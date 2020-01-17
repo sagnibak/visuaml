@@ -113,8 +113,8 @@ def grow(
     y  vector of training labels, shape (n, 1)
     indices     elements of `X` and `y` to be considered
     early_stop  a function that determines if tree growing should stop early
-    weights_pt  the weight of each point in the training set, shape (n, 1)
-    weights_ft  the weight of each feature in the training set, shape (1, m)
+    weights_pt  the weight of each point in the training set, shape (n,)
+    weights_ft  the weight of each feature in the training set, shape (m,)
                 if a weight vector is None, then each point/feature is equally
                 weighted
     depth       the depth of the current node
@@ -134,13 +134,6 @@ def grow(
         or _all_points_same(X, indices)  # all points same
     ):
         return LeafNode(indices.tolist())
-
-    # deal with all weightings once so you never have to again
-    # saves a lot of computation this way
-    if weights_ft is not None:
-        X = weights_ft * X
-    if weights_pt is not None:
-        X = weights_pt * X
 
     # otherwise find the best split (the one that minimizes the Gini Impurity)
     left_indices = indices
@@ -165,13 +158,17 @@ def grow(
         for val in split_points:
             left_indices_ = indices[np.where(X[indices, feature] < val)[0]]
             right_indices_ = indices[np.where(X[indices, feature] >= val)[0]]
-            left_impurity = gini_impurity(y[left_indices_])
-            right_impurity = gini_impurity(y[right_indices_])
+            left_impurity = gini_impurity(y[left_indices_], w=weights_pt)
+            right_impurity = gini_impurity(y[right_indices_], w=weights_pt)
 
             weighted_children_impurity = (
                 len(left_indices_) * left_impurity
                 + len(right_indices_) * right_impurity
             ) / len(indices)
+
+            if weights_ft is not None:
+                weighted_children_impurity *= weights_ft[feature]
+
             if weighted_children_impurity < min_gini_impurity:
                 min_gini_impurity = weighted_children_impurity
                 left_indices = left_indices_
@@ -202,16 +199,26 @@ def _all_points_same(X: np.ndarray, indices: np.ndarray) -> bool:
     return featurewise_unique.shape[0] == 1
 
 
-def gini_impurity(y: np.ndarray) -> float:
+def gini_impurity(y: np.ndarray, w: Optional[np.ndarray] = None) -> float:
     """Computes the Gini Impurity given labels `y`. Of the various ways to
     compute it, I chose the following formulation: 1 - the sum of the squared
     probability of each label. Note that `y` will often be a subset of the
     training labels, precisely, the labels of the elements of a node that may
     split.
+
+    `w` is an array of point weights with the same shape as `y`. Its elements
+    correspond to the weights of each of the elements of `y`.
     """
-    _, counts = np.unique(y, return_counts=True)
-    probs = counts / len(y)
-    return 1 - sum([pi ** 2 for pi in probs])
+    _, inv_idxs, counts = np.unique(y, return_inverse=True, return_counts=True)
+    if w is None:
+        weighted_probs = counts / len(y)
+    else:  # w is not None
+        weighted_probs = np.array(
+            [np.sum(w[inv_idxs == i]) for i in range(len(counts))]
+        ) / np.sum(
+            w
+        )  # find the total weight in each class
+    return 1 - sum([pi ** 2 for pi in weighted_probs])
 
 
 def entropy(y: np.ndarray) -> float:
@@ -223,7 +230,7 @@ def entropy(y: np.ndarray) -> float:
     return -1 * sum([pi * np.log(pi) for pi in probs])
 
 
-def leaves_too_small(threshold: int,) -> Callable[[np.ndarray, np.ndarray], bool]:
+def leaves_too_small(threshold: int) -> Callable[[np.ndarray, np.ndarray], bool]:
     """Returns an early stopping function which stops tree construction if there
     are at most `threshold` elements in the node being considered.
     """

@@ -1,8 +1,6 @@
 import matplotlib.pyplot as plt
-import networkx as nx
 import numpy as np
-
-G = nx.DiGraph()
+import pydot
 
 # add the nodes
 node_list = [
@@ -55,19 +53,22 @@ node_list = [
         },
     ),
 ]
-G.add_nodes_from(node_list)
+intro_tree = pydot.Dot(graph_type="digraph", ordering="out")
+for node_name, attrs in node_list:
+    intro_tree.add_node(pydot.Node(node_name, **attrs))
 
 # add the edges
 edge_list = [
-    (0, 1, {"label": "No"}),
     (0, 4, {"label": "Yes"}),
+    (0, 1, {"label": "No"}),
     (1, 2, {"label": "Yes"}),
     (1, 5, {"label": "No"}),
     (2, 6, {"label": "<45°F"}),
-    (2, 7, {"label": ">90°F"}),
     (2, 3, {"label": "45-90°F"}),
+    (2, 7, {"label": ">90°F"}),
 ]
-G.add_edges_from(edge_list)
+for u, v, attrs in edge_list:
+    intro_tree.add_edge(pydot.Edge(u, v, **attrs))
 
 # save the decision tree
-nx.nx_pydot.to_pydot(G).write_png("intro_tree.png")
+intro_tree.write_png("intro_tree.png")

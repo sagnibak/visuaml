@@ -87,7 +87,8 @@ def grow(
     X: np.ndarray,
     y: np.ndarray,
     indices: np.ndarray,
-    early_stop: Callable[[np.ndarray, np.ndarray], bool],
+    min_leaf_size: int = 1,
+    early_stop: Callable[[np.ndarray, np.ndarray], bool] = lambda X, y: False,
     weights_pt: Optional[np.ndarray] = None,
     weights_ft: Optional[np.ndarray] = None,
     depth: int = 0,
@@ -112,6 +113,7 @@ def grow(
        and m features
     y  vector of training labels, shape (n, 1)
     indices     elements of `X` and `y` to be considered
+    min_leaf_size  the minimum size of any leaf node
     early_stop  a function that determines if tree growing should stop early
     weights_pt  the weight of each point in the training set, shape (n,)
     weights_ft  the weight of each feature in the training set, shape (m,)
@@ -158,6 +160,13 @@ def grow(
         for val in split_points:
             left_indices_ = indices[np.where(X[indices, feature] < val)[0]]
             right_indices_ = indices[np.where(X[indices, feature] >= val)[0]]
+            # if any leaf is too small after this split, don't consider it
+            if (
+                len(left_indices_) < min_leaf_size
+                or len(right_indices_) < min_leaf_size
+            ):
+                continue
+            # otherwise see how good this split is
             left_impurity = gini_impurity(y[left_indices_], w=weights_pt)
             right_impurity = gini_impurity(y[right_indices_], w=weights_pt)
 
@@ -176,7 +185,11 @@ def grow(
                 split_feature = feature
                 split_value = val
 
-    # return the decision tree
+    # if we did not decide to split further, return a leaf
+    if right_indices == []:
+        return LeafNode(indices.tolist())
+
+    # otherwise return the decision tree
     return InternalNode(
         split_feature,
         split_value,
@@ -184,7 +197,8 @@ def grow(
             X,
             y,
             left_indices,
-            early_stop,
+            min_leaf_size=min_leaf_size,
+            early_stop=early_stop,
             weights_pt=weights_pt,
             weights_ft=weights_ft,
             depth=depth + 1,
@@ -195,7 +209,8 @@ def grow(
             X,
             y,
             right_indices,
-            early_stop,
+            min_leaf_size=min_leaf_size,
+            early_stop=early_stop,
             weights_pt=weights_pt,
             weights_ft=weights_ft,
             depth=depth + 1,
@@ -299,7 +314,7 @@ def visualize(
         node = pydot.Node(
             str(clock),
             label=f"Split feature {tree.split_feature}\n"
-            + f"Split value {tree.split_value}",
+            + f"Split value {tree.split_value:.3f}",
         )
         vis.add_node(node)
         vis.add_edge(pydot.Edge(node, left_node, label="<"))

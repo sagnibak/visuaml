@@ -56,15 +56,17 @@ class DecisionTreeClassifier:
     classifier and `clf.predict(x)` can be used to find the prediction of `x`.
     """
 
-    # the decision tree
-    tree: Tree
+    # training heuristic to use
+    heuristic: Callable[[np.ndarray, Optional[np.ndarray]], float]
     # aggregation function to use while predicting
     agg_fn: Callable[[np.ndarray], Union[int, float]]
+    # the decision tree
+    tree: Tree = field(init=False)
     # the training data
     X: np.ndarray = field(init=False)
     y: np.ndarray = field(init=False)
     # private flag to mark whether the classifier has been fit
-    _trained = field(init=False, default_factory=lambda: False)
+    _trained: bool = field(init=False, default_factory=lambda: False)
 
     def fit(self, X: np.ndarray, y: np.ndarray, *args, **kwargs) -> None:
         """Fit the tree `self.tree` on data `X` and `y`. `args` and `kwargs`
@@ -81,7 +83,9 @@ class DecisionTreeClassifier:
 
         self.X = X
         self.y = y
-        self.tree = grow(X, y, np.arange(len(y)), *args, **kwargs)
+        self.tree = grow(
+            X, y, np.arange(len(y)), *args, cost_fn=self.heuristic, **kwargs
+        )
         self._trained = True
 
     def predict(self, x: np.ndarray) -> Union[int, float]:
@@ -90,7 +94,13 @@ class DecisionTreeClassifier:
             raise RuntimeError(
                 "Cannot predict using untrained model. Please run `clf.fit(X, y)` first."
             )
-        return predict_iter(self.tree, x, self.y.astype(np.int64), self.agg_fn)
+        return predict_iter(self.tree, x, self.y, self.agg_fn)
+
+    def visualize_tree(self) -> pydot.Dot:
+        """Return a `pydot.Dot` instance which can be saved or further modified."""
+        vis = pydot.Dot(graph_type="digraph")
+        visualize(self.tree, vis, self.y)
+        return vis
 
 
 def predict(
@@ -129,153 +139,6 @@ def predict_iter(
     return agg_fn(y[tree.indices])
 
 
-def grow(
-    X: np.ndarray,
-    y: np.ndarray,
-    indices: np.ndarray,
-    min_leaf_size: int = 1,
-    early_stop: Callable[[np.ndarray, np.ndarray], bool] = lambda X, y: False,
-    weights_pt: Optional[np.ndarray] = None,
-    weights_ft: Optional[np.ndarray] = None,
-    depth: int = 0,
-    max_depth: Union[int, float] = float("inf"),
-    split_between: bool = False,
-) -> Tree:
-    """
-    If there is only one class in y[indices] or we have reached an early
-    stopping condition, then we return a leaf node containing all the elements
-    being considered. Otherwise we need to find the split that minimizes the
-    Gini Impurity of the children nodes, as follows:
-        For each feature, do:
-            Find and sort the unique values in X[indices, feature].
-            Compute the Gini Impurity of the children after each non-trivial
-            split.
-        Split at the feature and value that minimizes the children's Gini
-        Impurity and construct the children recursively.
-
-    Parameters
-    ----------
-    X  design matrix of shape (n, m), i.e., there are n observations
-       and m features
-    y  vector of training labels, shape (n, 1)
-    indices     elements of `X` and `y` to be considered
-    min_leaf_size  the minimum size of any leaf node
-    early_stop  a function that determines if tree growing should stop early
-    weights_pt  the weight of each point in the training set, shape (n,)
-    weights_ft  the weight of each feature in the training set, shape (m,)
-                if a weight vector is None, then each point/feature is equally
-                weighted
-    depth       the depth of the current node
-    max_depth   maximum depth of the tree (infinity by default)
-    split_between  whether to make splits at unique values or in between them
-
-    Returns
-    -------
-    a decision tree trained on X[indices] and y[indices]
-    """
-    # if there is only one class in the current node or we have reached an
-    # early stopping condition, then return a leaf
-    if (
-        np.allclose(gini_impurity(y[indices]), 0.0)  # node is pure
-        or early_stop(X[indices], y[indices])  # hit stopping condition
-        or depth >= max_depth  # reached max depth
-        or _all_points_same(X, indices)  # all points same
-    ):
-        return LeafNode(indices.tolist())
-
-    # otherwise find the best split (the one that minimizes the Gini Impurity)
-    left_indices = indices
-    right_indices = []
-    # split_feature = 0
-    # split_value = X[0, 0]
-    min_gini_impurity = 1  # the Gini Impurity is never more than 1
-
-    for feature in range(X.shape[1]):
-        # np.unique sorts the unique values!
-        unique_values = np.unique(X[indices, feature])
-        if split_between:
-            # split between every pair of unique points
-            split_points = np.correlate(unique_values, np.array([0.5, 0.5]))
-        else:
-            # split at exactly the unique points (but skip the first since that
-            # results in the trivial split)
-            split_points = unique_values[1:]
-
-        # the first split is trivial since no element is less than the smallest
-        # but there is at least one element >= the largest (emphasis on `=`)
-        for val in split_points:
-            left_indices_ = indices[np.where(X[indices, feature] < val)[0]]
-            right_indices_ = indices[np.where(X[indices, feature] >= val)[0]]
-            # if any leaf is too small after this split, don't consider it
-            if (
-                len(left_indices_) < min_leaf_size
-                or len(right_indices_) < min_leaf_size
-            ):
-                continue
-            # otherwise see how good this split is
-            left_impurity = gini_impurity(y[left_indices_], w=weights_pt)
-            right_impurity = gini_impurity(y[right_indices_], w=weights_pt)
-
-            weighted_children_impurity = (
-                len(left_indices_) * left_impurity
-                + len(right_indices_) * right_impurity
-            ) / len(indices)
-
-            if weights_ft is not None:
-                weighted_children_impurity *= weights_ft[feature]
-
-            if weighted_children_impurity < min_gini_impurity:
-                min_gini_impurity = weighted_children_impurity
-                left_indices = left_indices_
-                right_indices = right_indices_
-                split_feature = feature
-                split_value = val
-
-    # if we did not decide to split further, return a leaf
-    if right_indices == []:
-        return LeafNode(indices.tolist())
-
-    # otherwise return the decision tree
-    return InternalNode(
-        split_feature,
-        split_value,
-        grow(
-            X,
-            y,
-            left_indices,
-            min_leaf_size=min_leaf_size,
-            early_stop=early_stop,
-            weights_pt=weights_pt,
-            weights_ft=weights_ft,
-            depth=depth + 1,
-            max_depth=max_depth,
-            split_between=split_between,
-        ),
-        grow(
-            X,
-            y,
-            right_indices,
-            min_leaf_size=min_leaf_size,
-            early_stop=early_stop,
-            weights_pt=weights_pt,
-            weights_ft=weights_ft,
-            depth=depth + 1,
-            max_depth=max_depth,
-            split_between=split_between,
-        ),
-    )
-
-
-def _all_points_same(X: np.ndarray, indices: np.ndarray) -> bool:
-    """Determine if all the training points X[indices] are the same.
-    The algorithm finds the number of unique elements in each of the features
-    of X[indices]. If there is a single unique value in each of the features
-    or all the unique values are very close then all the points must be the same.
-    """
-    featurewise_unique = np.unique(X[indices], axis=0)
-    return featurewise_unique.shape[0] == 1
-
-
 def gini_impurity(y: np.ndarray, w: Optional[np.ndarray] = None) -> float:
     """Computes the Gini Impurity given labels `y`. Of the various ways to
     compute it, I chose the following formulation: 1 - the sum of the squared
@@ -305,6 +168,154 @@ def entropy(y: np.ndarray) -> float:
     _, counts = np.unique(y, return_counts=True)
     probs = counts / len(y)
     return -1 * sum([pi * np.log(pi) for pi in probs])
+
+
+def grow(
+    X: np.ndarray,
+    y: np.ndarray,
+    indices: np.ndarray,
+    min_leaf_size: int = 1,
+    early_stop: Callable[[np.ndarray, np.ndarray], bool] = lambda X, y: False,
+    weights_pt: Optional[np.ndarray] = None,
+    weights_ft: Optional[np.ndarray] = None,
+    depth: int = 0,
+    max_depth: Union[int, float] = float("inf"),
+    split_between: bool = False,
+    cost_fn: Callable[[np.ndarray, Optional[np.ndarray]], float] = gini_impurity,
+) -> Tree:
+    """
+    If there is only one class in y[indices] or we have reached an early
+    stopping condition, then we return a leaf node containing all the elements
+    being considered. Otherwise we need to find the split that minimizes the
+    Gini Impurity of the children nodes, as follows:
+        For each feature, do:
+            Find and sort the unique values in X[indices, feature].
+            Compute the Gini Impurity of the children after each non-trivial
+            split.
+        Split at the feature and value that minimizes the children's Gini
+        Impurity and construct the children recursively.
+
+    Parameters
+    ----------
+    X  design matrix of shape (n, m), i.e., there are n observations
+       and m features
+    y  vector of training labels, shape (n, 1)
+    indices     elements of `X` and `y` to be considered
+    min_leaf_size  the minimum size of any leaf node
+    early_stop  a function that determines if tree growing should stop early
+    weights_pt  the weight of each point in the training set, shape (n,)
+    weights_ft  the weight of each feature in the training set, shape (m,)
+                if a weight vector is None, then each point/feature is equally
+                weighted
+    depth       the depth of the current node
+    max_depth   maximum depth of the tree (infinity by default)
+    split_between  whether to make splits at unique values or in between them
+    cost_fn     cost function to choose the best split
+
+    Returns
+    -------
+    a decision tree trained on X[indices] and y[indices]
+    """
+    # if there is only one class in the current node or we have reached an
+    # early stopping condition, then return a leaf
+    if (
+        np.allclose(cost_fn(y[indices]), 0.0)  # node is pure
+        or early_stop(X[indices], y[indices])  # hit stopping condition
+        or depth >= max_depth  # reached max depth
+        or _all_points_same(X, indices)  # all points same
+    ):
+        return LeafNode(indices.tolist())
+
+    # otherwise find the best split (the one that minimizes the Gini Impurity)
+    left_indices = indices
+    right_indices = []
+    min_cost = 1  # the Gini Impurity is never more than 1
+
+    for feature in range(X.shape[1]):
+        # np.unique sorts the unique values!
+        unique_values = np.unique(X[indices, feature])
+        if split_between:
+            # split between every pair of unique points
+            split_points = np.correlate(unique_values, np.array([0.5, 0.5]))
+        else:
+            # split at exactly the unique points (but skip the first since that
+            # results in the trivial split)
+            split_points = unique_values[1:]
+
+        # the first split is trivial since no element is less than the smallest
+        # but there is at least one element >= the largest (emphasis on `=`)
+        for val in split_points:
+            left_indices_ = indices[np.where(X[indices, feature] < val)[0]]
+            right_indices_ = indices[np.where(X[indices, feature] >= val)[0]]
+            # if any leaf is too small after this split, don't consider it
+            if (
+                len(left_indices_) < min_leaf_size
+                or len(right_indices_) < min_leaf_size
+            ):
+                continue
+            # otherwise see how good this split is
+            left_cost = cost_fn(y[left_indices_], w=weights_pt)
+            right_cost = cost_fn(y[right_indices_], w=weights_pt)
+
+            weighted_children_cost = (
+                len(left_indices_) * left_cost + len(right_indices_) * right_cost
+            ) / len(indices)
+
+            if weights_ft is not None:
+                weighted_children_cost *= weights_ft[feature]
+
+            if weighted_children_cost < min_cost:
+                min_cost = weighted_children_cost
+                left_indices = left_indices_
+                right_indices = right_indices_
+                split_feature = feature
+                split_value = val
+
+    # if we did not decide to split further, return a leaf
+    if isinstance(right_indices, list) and right_indices == []:
+        return LeafNode(indices.tolist())
+
+    # otherwise return the decision tree
+    return InternalNode(
+        split_feature,
+        split_value,
+        grow(
+            X,
+            y,
+            left_indices,
+            min_leaf_size=min_leaf_size,
+            early_stop=early_stop,
+            weights_pt=weights_pt,
+            weights_ft=weights_ft,
+            depth=depth + 1,
+            max_depth=max_depth,
+            split_between=split_between,
+            cost_fn=cost_fn,
+        ),
+        grow(
+            X,
+            y,
+            right_indices,
+            min_leaf_size=min_leaf_size,
+            early_stop=early_stop,
+            weights_pt=weights_pt,
+            weights_ft=weights_ft,
+            depth=depth + 1,
+            max_depth=max_depth,
+            split_between=split_between,
+            cost_fn=cost_fn,
+        ),
+    )
+
+
+def _all_points_same(X: np.ndarray, indices: np.ndarray) -> bool:
+    """Determine if all the training points X[indices] are the same.
+    The algorithm finds the number of unique elements in each of the features
+    of X[indices]. If there is a single unique value in each of the features
+    or all the unique values are very close then all the points must be the same.
+    """
+    featurewise_unique = np.unique(X[indices], axis=0)
+    return featurewise_unique.shape[0] == 1
 
 
 def leaves_too_small(threshold: int) -> Callable[[np.ndarray, np.ndarray], bool]:
@@ -367,6 +378,7 @@ def visualize(
         vis.add_edge(pydot.Edge(node, right_node, label=">="))
 
     return node, clock + 1
+
 
 def plurality(x: np.ndarray) -> int:
     """Returns the element of x that has plurality. `x` should have an integer

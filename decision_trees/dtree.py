@@ -90,7 +90,7 @@ class DecisionTreeClassifier:
             raise RuntimeError(
                 "Cannot predict using untrained model. Please run `clf.fit(X, y)` first."
             )
-        return predict_iter(self.tree, x, self.y, self.agg_fn)
+        return predict_iter(self.tree, x, self.y.astype(np.int64), self.agg_fn)
 
 
 def predict(
@@ -367,3 +367,9 @@ def visualize(
         vis.add_edge(pydot.Edge(node, right_node, label=">="))
 
     return node, clock + 1
+
+def plurality(x: np.ndarray) -> int:
+    """Returns the element of x that has plurality. `x` should have an integer
+    dtype. This is used for classification tasks.
+    """
+    return np.argmax(np.bincount(x))

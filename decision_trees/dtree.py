@@ -49,7 +49,7 @@ class InternalNode(Tree):
 
 
 @dataclass
-class DecisionTreeClassifier:
+class DecisionTreeModel:
     """A convenience class to tie together a decision tree, a prediction
     function, and the training data required to make a classification. This
     provides an interface like scikit-learn, where `clf.fit(X, y)` trains a

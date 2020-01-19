@@ -1,8 +1,9 @@
 import numpy as np
 import pydot
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import *
+import warnings
 
 
 @dataclass(frozen=True)
@@ -45,6 +46,51 @@ class InternalNode(Tree):
     split_value: float
     left_subtree: Tree
     right_subtree: Tree
+
+
+@dataclass
+class DecisionTreeClassifier:
+    """A convenience class to tie together a decision tree, a prediction
+    function, and the training data required to make a classification. This
+    provides an interface like scikit-learn, where `clf.fit(X, y)` trains a
+    classifier and `clf.predict(x)` can be used to find the prediction of `x`.
+    """
+
+    # the decision tree
+    tree: Tree
+    # aggregation function to use while predicting
+    agg_fn: Callable[[np.ndarray], Union[int, float]]
+    # the training data
+    X: np.ndarray = field(init=False)
+    y: np.ndarray = field(init=False)
+    # private flag to mark whether the classifier has been fit
+    _trained = field(init=False, default_factory=lambda: False)
+
+    def fit(self, X: np.ndarray, y: np.ndarray, *args, **kwargs) -> None:
+        """Fit the tree `self.tree` on data `X` and `y`. `args` and `kwargs`
+        are passed to the function `grow`. Also, save the training data to
+        enable prediction.
+        """
+        # warn the user if the model has been trained once
+        if self._trained is True:
+            warnings.warn(
+                RuntimeWarning(
+                    "Re-training a pretrained classifier, previous training will be lost."
+                )
+            )
+
+        self.X = X
+        self.y = y
+        self.tree = grow(X, y, np.arange(len(y)), *args, **kwargs)
+        self._trained = True
+
+    def predict(self, x: np.ndarray) -> Union[int, float]:
+        """Predict the label for data point `x`."""
+        if not self._trained:
+            raise RuntimeError(
+                "Cannot predict using untrained model. Please run `clf.fit(X, y)` first."
+            )
+        return predict_iter(self.tree, x, self.y, self.agg_fn)
 
 
 def predict(
